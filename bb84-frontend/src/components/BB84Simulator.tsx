@@ -1,0 +1,634 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button"; // if you’re using shadcn/ui
+import {
+  ProtocolState,
+  ChatMessage,
+  PhotonData,
+  QubitData,
+  Basis,
+  Bit,
+} from "@/types/bb84";
+import { AlicePanel } from "./AlicePanel";
+import { BobPanel } from "./BobPanel";
+import { QuantumChannel } from "./QuantumChannel";
+import { EvePanel } from "./EvePanel";
+import { ControlPanel } from "./ControlPanel";
+import { ChatLog } from "./ChatLog";
+import { ResultsCard } from "./ResultsCard";
+import { Navbar } from "./Navbar";
+import { BB84Api, handleApiError } from "@/services/bb84Api";
+import { useToast } from "@/hooks/use-toast";
+import QubitVisualizer from "./QubitVisualizer";
+import MultiQubitVisualizer from "./MultiQubitVisualizer";
+import OverallCircuit from "./OverallCircuit";
+import { HackathonFooter } from "./HackathonFooter";
+
+const generateRandomBit = (): Bit => (Math.random() < 0.5 ? 0 : 1);
+const generateRandomBasis = (): Basis => (Math.random() < 0.5 ? "+" : "x");
+
+export const BB84Simulator = ({
+  mode,
+  onBack,
+}: {
+  mode: "without-eve" | "with-eve";
+  onBack: () => void;
+}) => {
+  const { toast } = useToast();
+
+  const [state, setState] = useState<ProtocolState>({
+    mode,
+    step: "idle",
+    currentRound: 10000,
+    totalRounds: 8,
+    aliceData: [],
+    bobBases: [],
+    eveBasis: [],
+    bobMeasurements: [],
+    eveInterceptions: [],
+    matchingIndices: [],
+    sharedKey: "",
+    errorRate: 0,
+    speed: "normal",
+  });
+  const [showCircuits, setShowCircuits] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [photons, setPhotons] = useState<PhotonData[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [eveInterceptionRate, setEveInterceptionRate] = useState(1.0);
+  const [errorHistory, setErrorHistory] = useState<number[]>([]);
+  const [errorsFixed, setErrorsFixed] = useState<number>(0);
+  const [blocksWithErrors, setBlocksWithErrors] = useState<number>(0);
+  const [rawAliceKey, setRawAliceKey] = useState<number[]>([]);
+  const [rawBobKey, setRawBobKey] = useState<number[]>([]);
+  const [correctedBobKey, setCorrectedBobKey] = useState<number[]>([]);
+
+  const simulationGridRef = useRef<HTMLDivElement | null>(null);
+  const keyResultsRef = useRef<HTMLDivElement | null>(null);
+
+  const addMessage = useCallback(
+    (sender: ChatMessage["sender"], message: string, round?: number) => {
+      const newMessage: ChatMessage = {
+        id: `${Date.now()}-${Math.random()}`,
+        sender,
+        message,
+        timestamp: Date.now(),
+        round,
+      };
+      setMessages((prev) => [...prev, newMessage]);
+    },
+    [],
+  );
+
+  const generateQubits = useCallback((): QubitData[] => {
+    return Array.from({ length: state.totalRounds }, () => ({
+      bit: generateRandomBit(),
+      basis: generateRandomBasis(),
+    }));
+  }, [state.totalRounds]);
+
+  const generateBobBases = useCallback((): Basis[] => {
+    return Array.from({ length: state.totalRounds }, () =>
+      generateRandomBasis(),
+    );
+  }, [state.totalRounds]);
+
+  const generateEveBases = useCallback((): Basis[] => {
+    return Array.from({ length: state.totalRounds }, () =>
+      generateRandomBasis(),
+    );
+  }, [state.totalRounds]);
+
+  const onPrepareQubits = useCallback(async () => {
+    // Delay scroll until React updates the DOM
+    setTimeout(() => {
+      const element = simulationGridRef.current;
+      if (element) {
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+
+        // Add offset after scrollIntoView
+        setTimeout(() => {
+          window.scrollBy({
+            top: -150, // negative value moves up by 100px
+            behavior: "smooth",
+          });
+        }, 300); // delay to let scrollIntoView finish
+      }
+    }, 100);
+
+    try {
+      setIsProcessing(true);
+      await BB84Api.reset();
+
+      const aliceData = generateQubits();
+      const bobBases = generateBobBases();
+      const eveBasis = generateEveBases();
+
+      setState((prev) => ({
+        ...prev,
+        step: "prepared",
+        currentRound: -1,
+        aliceData,
+        bobBases,
+        eveBasis,
+        bobMeasurements: new Array(state.totalRounds).fill(null),
+        eveInterceptions: [],
+        matchingIndices: [],
+        sharedKey: "",
+        errorRate: 0,
+      }));
+
+      setMessages([]);
+      setPhotons([]);
+      setErrorHistory([]);
+
+      addMessage(
+        "system",
+        `Prepared ${state.totalRounds} random qubits with random bases`,
+      );
+      addMessage(
+        "alice",
+        `Generated ${state.totalRounds} qubits for transmission`,
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: handleApiError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [state.totalRounds, generateQubits, generateBobBases, addMessage, toast]);
+
+  const onSendQubits = useCallback(async () => {
+    if (state.aliceData.length === 0) return;
+
+    // Delay scroll until React updates the DOM
+    setTimeout(() => {
+      const element = simulationGridRef.current;
+      if (element) {
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+
+        // Add offset after scrollIntoView
+        setTimeout(() => {
+          window.scrollBy({
+            top: -150, // negative value moves up by 100px
+            behavior: "smooth",
+          });
+        }, 300); // delay to let scrollIntoView finish
+      }
+    }, 100);
+
+    try {
+      setIsProcessing(true);
+      setState((prev) => ({ ...prev, step: "sending", currentRound: 0 }));
+
+      const eveInterceptions: boolean[] = [];
+      const bobMeasurements: (Bit | null)[] = new Array(state.totalRounds).fill(
+        null,
+      );
+
+      for (let i = 0; i < state.aliceData.length; i++) {
+        const qubit = state.aliceData[i];
+        const bobBasis = state.bobBases[i];
+
+        // Update current round
+        setState((prev) => ({ ...prev, currentRound: i }));
+
+        // Send qubit from Alice
+        await BB84Api.sendQubit({ bit: qubit.bit, basis: qubit.basis });
+        addMessage("alice", `Sent bit ${qubit.bit} in ${qubit.basis} basis`, i);
+
+        // Create and animate photon
+        const photon: PhotonData = {
+          id: `photon-${i}`,
+          bit: qubit.bit,
+          basis: qubit.basis,
+          round: i,
+          x: 0,
+          y: 0,
+          isIntercepted: false,
+          isComplete: false,
+        };
+
+        setPhotons((prev) => [...prev, photon]);
+
+        // Eve interception (if enabled)
+        const shouldIntercept =
+          state.mode === "with-eve" && Math.random() < eveInterceptionRate;
+        eveInterceptions[i] = shouldIntercept;
+
+        if (shouldIntercept) {
+          await BB84Api.eveIntercept(i);
+          photon.isIntercepted = true;
+          addMessage("eve", `Intercepted and measured qubit ${i + 1}`, i);
+        }
+
+        const bobResponse = await BB84Api.bobMeasure(i, { basis: bobBasis });
+        bobMeasurements[i] = bobResponse.bob_result.measured;
+        addMessage(
+          "bob",
+          `Measured in ${bobBasis} basis → ${bobResponse.bob_result.measured}`,
+          i,
+        );
+        // Wait for animation
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            state.speed === "fast"
+              ? 500
+              : state.speed === "normal"
+                ? 1000
+                : 1500,
+          ),
+        );
+      }
+
+      setState((prev) => ({
+        ...prev,
+        step: "measuring",
+        currentRound: state.totalRounds,
+        bobMeasurements,
+        eveInterceptions,
+      }));
+
+      addMessage("system", "All qubits transmitted and measured");
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: handleApiError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [state, eveInterceptionRate, addMessage, toast]);
+
+  const onCompareBases = useCallback(async () => {
+    // Delay scroll until React updates the DOM
+    setTimeout(() => {
+      const element = simulationGridRef.current;
+      if (element) {
+        element.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+
+        // Add offset after scrollIntoView
+        setTimeout(() => {
+          window.scrollBy({
+            top: -150, // negative value moves up by 100px
+            behavior: "smooth",
+          });
+        }, 300); // delay to let scrollIntoView finish
+      }
+    }, 100);
+    try {
+      setIsProcessing(true);
+
+      const result = await BB84Api.compareBases();
+
+      setState((prev) => ({
+        ...prev,
+        step: "comparing",
+        matchingIndices: result.matching_indices,
+      }));
+
+      addMessage(
+        "system",
+        `Publicly compared bases: ${result.matching_indices.length} matches found`,
+      );
+      addMessage(
+        "alice",
+        `Keeping bits at positions: ${result.matching_indices.join(", ")}`,
+      );
+      addMessage(
+        "bob",
+        `Keeping bits at positions: ${result.matching_indices.join(", ")}`,
+      );
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: handleApiError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [addMessage, toast]);
+
+  const onGenerateKey = useCallback(async () => {
+    setTimeout(() => {
+      keyResultsRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
+    try {
+      setIsProcessing(true);
+
+      const result = await BB84Api.getFinalKey();
+
+      setRawAliceKey(result.alice_key);
+      setRawBobKey(result.bob_key);
+
+      setState((prev) => ({
+        ...prev,
+        step: "key-generated",
+        sharedKey: result.shared_key,
+        errorRate: result.error_rate / 100,
+      }));
+      setErrorHistory((prev) => [...prev, result.error_rate / 100]);
+
+      addMessage(
+        "system",
+        `Raw key generated — Alice: ${result.alice_key.join("")}`,
+      );
+      addMessage("system", `Bob's key:            ${result.bob_key.join("")}`);
+      if (result.has_eavesdropper) {
+        addMessage(
+          "system",
+          `⚠️ High error rate (${result.error_rate.toFixed(1)}%) — possible eavesdropping! Apply error correction.`,
+        );
+      } else {
+        addMessage(
+          "system",
+          `Error rate: ${result.error_rate.toFixed(1)}% — apply error correction to reconcile.`,
+        );
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: handleApiError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [addMessage, toast]);
+
+  const onErrorCorrection = useCallback(async () => {
+    try {
+      setIsProcessing(true);
+
+      const result = await BB84Api.getErrorCorrection(3);
+
+      setErrorsFixed(result.errors_corrected);
+      setBlocksWithErrors(result.blocks_with_errors);
+      setCorrectedBobKey(result.corrected_bob_key);
+
+      setState((prev) => ({
+        ...prev,
+        step: "complete",
+        sharedKey: result.alice_key.join(""),
+        errorRate: 0,
+      }));
+
+      if (result.errors_corrected === 0) {
+        addMessage(
+          "system",
+          "Error correction complete — no errors found, key is already consistent",
+        );
+      } else {
+        addMessage(
+          "system",
+          `Error correction complete — fixed ${result.errors_corrected} bit(s) across ${result.blocks_with_errors} block(s)`,
+        );
+      }
+      addMessage(
+        "alice",
+        `Broadcasted parities for ${result.total_blocks} block(s) of size ${result.block_size}`,
+      );
+      addMessage("bob", `Corrected key: ${result.corrected_bob_key.join("")}`);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: handleApiError(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [addMessage, toast]);
+
+  const onReset = useCallback(() => {
+    setState({
+      mode: state.mode,
+      step: "idle",
+      currentRound: 0,
+      totalRounds: state.totalRounds,
+      aliceData: [],
+      bobBases: [],
+      eveBasis: [],
+      bobMeasurements: [],
+      eveInterceptions: [],
+      matchingIndices: [],
+      sharedKey: "",
+      errorRate: 0,
+      speed: state.speed,
+    });
+    setMessages([]);
+    setPhotons([]);
+    setErrorHistory([]);
+    setErrorsFixed(0);
+    setBlocksWithErrors(0);
+    setRawAliceKey([]);
+    setRawBobKey([]);
+    setCorrectedBobKey([]);
+    setIsProcessing(false);
+    addMessage("system", "Protocol reset - ready for new simulation");
+  }, [state.mode, state.totalRounds, state.speed, addMessage]);
+
+  return (
+    <div className="min-h-screen">
+      <Navbar />
+
+      <div className="pt-20 p-4">
+        {/* Back Button */}
+        <div className="max-w-7xl mx-auto mb-6">
+          <button
+            onClick={onBack}
+            className="px-4 py-2 bg-muted hover:bg-muted/70 rounded-md text-sm font-medium transition-colors"
+          >
+            ← Back to Home
+          </button>
+        </div>
+
+        <div className="max-w-7xl mx-auto space-y-6">
+          {/* Header */}
+          <div className="text-center space-y-2">
+            <motion.h1
+              className="text-4xl font-bold bg-gradient-to-r from-primary to-primary-glow bg-clip-text text-transparent"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6 }}
+            >
+              BB84 Quantum Key Distribution
+            </motion.h1>
+            <motion.p
+              className="text-muted-foreground text-lg"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.3, duration: 0.6 }}
+            >
+              Interactive demonstration of quantum cryptography protocol
+            </motion.p>
+          </div>
+
+          {/* Eve Panel (only when active) */}
+          <AnimatePresence>
+            {state.mode === "with-eve" && (
+              <EvePanel
+                isActive={state.step === "sending"}
+                interceptionRate={eveInterceptionRate}
+                interceptedRounds={state.eveInterceptions
+                  .map((intercepted, i) => (intercepted ? i : -1))
+                  .filter((i) => i >= 0)}
+                totalRounds={state.totalRounds}
+                onInterceptionRateChange={setEveInterceptionRate}
+                currentRound={state.currentRound}
+                evesBasis={state.eveBasis}
+              />
+            )}
+          </AnimatePresence>
+
+          {/* Main Simulation Grid */}
+          <div
+            ref={simulationGridRef}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            {/* Alice Panel */}
+            <AlicePanel
+              qubits={state.aliceData}
+              currentRound={state.currentRound}
+              isActive={state.step === "sending"}
+            />
+
+            {/* Bob Panel */}
+            <BobPanel
+              bases={state.bobBases}
+              measurements={state.bobMeasurements}
+              aliceBases={
+                state.step === "comparing" || state.step === "complete"
+                  ? state.aliceData.map((q) => q.basis)
+                  : new Array(state.totalRounds).fill(null)
+              } // ✅ Hide until compare step
+              currentRound={state.currentRound}
+              isActive={state.step === "measuring"}
+            />
+            {/* <BobPanel
+            bases={state.bobBases}
+            measurements={state.bobMeasurements}
+            aliceBases={state.aliceData.map((q) => q.basis)}
+            currentRound={state.currentRound}
+            isActive={state.step === "measuring"}
+          /> */}
+          </div>
+
+          {/* Quantum Channel */}
+          <QuantumChannel
+            photons={photons}
+            isActive={state.step === "sending"}
+            speed={state.speed}
+            onPhotonComplete={(photonId) => {
+              setPhotons((prev) =>
+                prev.map((p) =>
+                  p.id === photonId ? { ...p, isComplete: true } : p,
+                ),
+              );
+            }}
+            aliceBasis={
+              state.currentRound < state.aliceData.length
+                ? state.aliceData[state.currentRound]?.basis
+                : "+"
+            }
+            bobBasis={
+              state.currentRound < state.bobBases.length
+                ? state.bobBases[state.currentRound]
+                : "+"
+            }
+            eveBasis={
+              state.currentRound < state.eveBasis.length
+                ? state.eveBasis[state.currentRound]
+                : "+"
+            }
+            eveEnabled={state.mode === "with-eve"}
+            currentRound={state.currentRound}
+          />
+
+          {/* Control Panel */}
+          <ControlPanel
+            state={state}
+            onPrepareQubits={onPrepareQubits}
+            onSendQubits={onSendQubits}
+            onCompareBases={onCompareBases}
+            onErrorCorrection={onErrorCorrection}
+            onGenerateKey={onGenerateKey}
+            onReset={onReset}
+            onModeChange={(mode) => setState((prev) => ({ ...prev, mode }))}
+            onSpeedChange={(speed) => setState((prev) => ({ ...prev, speed }))}
+            onQubitCountChange={(count) =>
+              setState((prev) => ({ ...prev, totalRounds: count }))
+            }
+            isProcessing={isProcessing}
+          />
+
+          {/* <MultiQubitVisualizer
+          index={state.currentRound - 1}
+          totalRounds={state.totalRounds}
+        /> */}
+
+          {/* Bottom Row: Chat and Results */}
+          <div
+            ref={keyResultsRef}
+            className="grid grid-cols-1 lg:grid-cols-2 gap-6"
+          >
+            <ResultsCard
+              sharedKey={state.sharedKey}
+              errorRate={state.errorRate}
+              isSecure={state.errorRate <= 0.11}
+              matchingBits={state.matchingIndices.length}
+              totalBits={state.totalRounds}
+              errorHistory={errorHistory}
+              rawAliceKey={rawAliceKey}
+              rawBobKey={rawBobKey}
+              correctedBobKey={correctedBobKey}
+              errorsFixed={errorsFixed}
+              blocksWithErrors={blocksWithErrors}
+              step={state.step}
+            />
+            <ChatLog
+              messages={messages}
+              isCollapsed={chatCollapsed}
+              onToggle={() => setChatCollapsed(!chatCollapsed)}
+            />
+          </div>
+
+          {state.step === "complete" && (
+            <div className="my-4">
+              <Button
+                variant="outline"
+                onClick={() => setShowCircuits(!showCircuits)}
+                className="mb-4"
+              >
+                {showCircuits ? "Hide Circuits" : "Show Circuits"}
+              </Button>
+
+              {showCircuits && (
+                <OverallCircuit eve={state.mode === "with-eve"} />
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
