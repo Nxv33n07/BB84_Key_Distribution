@@ -1,0 +1,28 @@
+# Node.js
+node_modules/
+dist/
+.env
+.env.local
+.env.production
+.eslintcache
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.venv/
+.env/
+
+# Vercel
+.vercel
+
+# OS
+.DS_Store
+Thumbs.db

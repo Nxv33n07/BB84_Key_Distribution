@@ -17,7 +17,6 @@
       "dest": "api/index.py"
     },
     {
-      "handled": true,
       "src": "/(.*)",
       "dest": "bb84-frontend/$1"
     }

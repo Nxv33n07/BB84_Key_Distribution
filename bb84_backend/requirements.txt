@@ -1,9 +1,0 @@
-fastapi
-pydantic
-uvicorn
-matplotlib
-qiskit
-qiskit-aer
-pylatexenc
-numpy
-scipy
