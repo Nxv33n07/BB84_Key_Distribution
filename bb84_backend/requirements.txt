@@ -3,5 +3,7 @@ pydantic
 uvicorn
 matplotlib
 qiskit
-qiskit_aer
+qiskit-aer
 pylatexenc
+numpy
+scipy
