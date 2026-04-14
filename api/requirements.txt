@@ -2,8 +2,8 @@ fastapi
 pydantic
 uvicorn
 matplotlib
-qiskit>=1.1.0
-qiskit-aer>=0.14.2
+qiskit
+qiskit-aer
 pylatexenc
 numpy
 scipy

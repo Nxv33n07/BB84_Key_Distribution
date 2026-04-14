@@ -1,5 +1,9 @@
 import matplotlib
 matplotlib.use("Agg")
+import qiskit
+import qiskit_aer
+print(f"DEBUG: Qiskit version: {qiskit.__version__}")
+print(f"DEBUG: Qiskit Aer version: {qiskit_aer.__version__}")
 from fastapi import FastAPI,Query
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +17,7 @@ import io
 import base64
 from fastapi.responses import JSONResponse
 from qiskit.quantum_info import Pauli
-app = FastAPI(title="BB84 Quantum Key Distribution API (Qiskit)")
+app = FastAPI(title="BB84 Quantum Key Distribution API (Qiskit)", root_path="/api")
 
 app.add_middleware(
     CORSMiddleware,
