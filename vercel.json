@@ -3,19 +3,21 @@
   "builds": [
     {
       "src": "bb84-frontend/package.json",
-      "use": "@vercel/static-build"
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
     },
     {
-      "src": "bb84_backend/app.py",
+      "src": "api/index.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "bb84_backend/app.py"
+      "dest": "api/index.py"
     },
     {
+      "handled": true,
       "src": "/(.*)",
       "dest": "bb84-frontend/$1"
     }
